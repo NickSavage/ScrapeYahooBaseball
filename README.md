@@ -12,5 +12,11 @@ Scrape Yahoo Fantasy Baseball player page for statistics. This is a significant 
 * -c CONFIG, --config CONFIG: loads given configuration file (default: config.ini)
 * -p MAX_PAGES, --max-pages MAX_PAGES: scrapes MAX_PAGES pages from Yahoo (default: 1)
 * -t, --timeframe: Scrapes statistics from either the whole 2016 or 2015 seasons, or the last 7, 14 or 30 days, or from the current day.
-* -s, --sort: Changes how Yahoo sorts the players, either by their O-Rank or the current ranking
+* -s, --sort: Changes how Yahoo sorts the players, either by their O-Rank or the current ranking (default: current)
 * --available: Flag to indicate that you only want to scrape players not owned by a fantasy team (default: false)
+
+### Configuration:
+By default, it reads from config.ini in the same folder as the script. Currently it supports the following configuration options:
+* username
+* password
+* leagueID
