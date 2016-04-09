@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import mechanize
 import cookielib
 from bs4 import BeautifulSoup
@@ -5,22 +7,135 @@ import csv
 import getpass
 import datetime
 import sys
+import configobj
+import argparse
+
+CONFIG_PLAYERTYPE = ""
+CONFIG_TIMEFRAME = ""
+CONFIG_AVAILABLE = ""
+CONFIG_LEAGUEID = 0
+CONFIG_FILENAME = ""
+CONFIG_SORT = ""
 
 def main():
+        global CONFIG_LEAGUEID
+        global CONFIG_FILENAME
+        global CONFIG_SORT 
 
-	(selection1, selection2, selection3, leagueID, maxPages, username, password) = selection_menu()
-	url = buildURL(selection1, selection2, selection3, leagueID)
+        # command line parsing
+        parser = argparse.ArgumentParser(description="Scrape baseball player data from Yahoo Fantasy Sports")
+        parser.add_argument('-c','--config', default="config.ini")
+        parser.add_argument('-p','--max-pages', default=1)
+        parser.add_argument('-t','--timeframe', choices=['2016', '2015', 'today', '7', '14', '30'], default='2016')
+        parser.add_argument('-s','--sort', choices=['OR','AR'], default="AR")
+        parser.add_argument('--available', action='store_true')
+        parser.add_argument('action', choices=['pitchers', 'batters', 'both'], help="scrape pitchers")
+        
+        args = parser.parse_args()
+        action = str(args.action)
 
-	if selection1 == 1:
+        if (action == "pitchers"):
+                CONFIG_PLAYERTYPE = "1"
+        elif (action == "batters"):
+                CONFIG_PLAYERTYPE = "2"
+        elif (action == "both"):
+                CONFIG_PLAYERTYPE = "3"
+        CONFIG_FILENAME = args.config
+        maxPages = int(args.max_pages)
+        CONFIG_TIMEFRAME = args.timeframe
+        CONFIG_SORT = args.sort
+        if (args.available):
+                CONFIG_AVAILABLE = 2
+        elif (args.available == False):
+                CONFIG_AVAILABLE = 1
+
+        # load config from config file. At the moment, its only for leagueID, username and password
+        # but in the future it will include overriding the defaults of the options
+        (CONFIG_LEAGUEID, username, password) = loadConfig(CONFIG_FILENAME)
+
+        # Start scraping process
+	br = authentication(username, password)
+        if CONFIG_PLAYERTYPE == "1": 
+                (writer, ofile) = buildWriter("1")
+                scrape(br, writer, ofile, 1, CONFIG_TIMEFRAME, CONFIG_AVAILABLE, maxPages)
+        elif CONFIG_PLAYERTYPE == "2":
+                (writer, ofile) = buildWriter("2")
+                scrape(br, writer, ofile, 2, CONFIG_TIMEFRAME, CONFIG_AVAILABLE, maxPages)
+        elif CONFIG_PLAYERTYPE == "3": 
+                (writer, ofile) = buildWriter("1")
+                scrape(br, writer, ofile, 1, CONFIG_TIMEFRAME, CONFIG_AVAILABLE, maxPages)
+                (writer, ofile) = buildWriter("2")
+                scrape(br, writer, ofile, 2, CONFIG_TIMEFRAME, CONFIG_AVAILABLE, maxPages)
+
+def buildWriter(CONFIG_PLAYERTYPE):
+        global CONFIG_LEAGUEID
+        # build filename for export
+	if CONFIG_PLAYERTYPE == "1":
 		end_filename = 'Pitchers'
-	if selection1 == 2:
+	if CONFIG_PLAYERTYPE == "2":
 		end_filename = 'Batters'
 
-	filename = 'FBB_data_' + str(leagueID) + '_' + end_filename + '_' + str(datetime.date.today()) + '.csv'
+	filename = 'FBB_data_' + str(CONFIG_LEAGUEID) + '_' + end_filename + '_' + str(datetime.date.today()) + '.csv'
+        print filename
 	ofile = open(filename, "wb")
 	writer = csv.writer(ofile, delimiter = ',', escapechar = ' ')
+        return writer, ofile
+                
+def scrape(br, writer, ofile, localPlayerType, localTimeFrame, localAvailable, localMaxPages):
+        #building url for scraping
+	url = buildURL(localPlayerType, localTimeFrame, localAvailable)
+	content = br.open(url + '0')
+	soup = BeautifulSoup(content, "lxml")
+        print url
 
-	# Authentication and Cookie Handling
+        # build list of stats to scrape, based on what your league counts
+	statsList = soup.findAll('th', {'class':'Ta-end'})
+	stats = ['Name', 'Team', 'Pos', 'Fantasy Team']
+	for s in statsList:
+		t = str(s.findAll(text=True))
+		t = t[3:len(t)-2]
+		stats.append(t.split(",")[0])
+		try:
+                       stats.remove("Rankings")
+		except:
+			continue
+
+	writer.writerow(stats) # write first row of csv file
+	pageNum = 0 # initialize counter for scraping lists of players
+
+	while True:
+		count = 0
+		pageCount = str(pageNum * 25)
+                print "Loading page",(pageNum+1)
+
+                end = scrapePage(count, pageCount, br, url, stats, writer)
+                count += 1
+                pageNum += 1
+                if pageNum >= localMaxPages: break
+                if end == 1: break
+        ofile.close() 
+                        
+                
+def loadConfig(filename):
+        filename = open(filename, 'r')
+        config = configobj.ConfigObj(filename)
+
+        if (config['username']):
+                username = config['username']
+        else:
+                username = ""
+        if (config['password']):
+                password = config['password']
+        else:
+                password = ""
+        if (config['leagueID']):
+                leagueID = config['leagueID']
+        else:
+                leagueID = 0
+
+        return(leagueID, username, password)
+        
+def authentication(username, password):
 	cj = cookielib.CookieJar()
 	br = mechanize.Browser()
 	br.set_handle_robots(False)
@@ -33,141 +148,64 @@ def main():
 	br.select_form(nr=0)
 	br.form["passwd"] = password
 	br.submit()
+        return br
 
-	content = br.open(url + '0')
-	soup = BeautifulSoup(content)
-	statsList = soup.findAll('th', {'class':'Ta-end'})
-	stats = ['Name', 'Team', 'Pos', 'Fantasy Team']
-	for s in statsList:
-		t = str(s.findAll(text=True))
-		t = t[3:len(t)-2]
-		stats.append(t.split(",")[0])
-		try:
-			stats.remove("Rankings")
-		except:
-			continue
+def scrapePage(count, pageCount, br, url, stats, writer):
+        # gets information from url
+        content = br.open(url + pageCount)
+        soup = BeautifulSoup(content, "lxml")
+        
+        players = soup.findAll('div', {'class':'ysf-player-name Nowrap Grid-u Relative Lh-xs Ta-start'})
+        dataList = soup.findAll('td', {'class': 'Ta-end'})
+        # Following block finds all the fantasy team names and puts them into fanTeams without all the html and formatting
+        fantasyTeams = soup.findAll('div', {'style':'text-overflow: ellipsis; overflow: hidden;'})
+        # Make array of fantasy team names
+        fanTeams = []
+        for f in fantasyTeams:
+                s = f.findAll(text=True)
+                fanTeams.append(str(s)[3:-2])
+        fanTeams.pop(0)
 
-	writer.writerow(stats)
-	pageNum = 0
+        # Find end of player list
+        try:
+                str(players[0].findAll(text=True))
+        except:
+                print "End of Players"
+                return 1
 
-	while True:
-		count = 0
-		pageCount = str(pageNum * 25)
-		print "Loading page",(pageNum+1)
-		content = br.open(url + pageCount)
-		soup = BeautifulSoup(content)
-		players = soup.findAll('div', {'class':'ysf-player-name Nowrap Grid-u Relative Lh-xs Ta-start'})
-		dataList = soup.findAll('td', {'class': 'Ta-end'})
-		fantasyTeams = soup.findAll('div', {'style':'text-overflow: ellipsis; overflow: hidden;'})
+        for player in players:
+                playerStats = []
+                # extracts only name, team, position from html.
+                # magic python function!
+                playerData = str(player.findAll(text=True)) 
+                name = getName(playerData)
+                (team, pos) = getTeamAndPosition(playerData)
 
-		fanTeams = []
-		for f in fantasyTeams:
-			tmpf = str(f.findAll(text=True))[3:len(f)-3]
-			fanTeams.append(fixText(tmpf))
-
-		# Exit condition
-		try:
-			str(players[0].findAll(text=True))
-		except:
-			break
-
-		for player in players:
-			playerStats = []
-			pNum = count*(len(stats)-4)
-			playerData = str(player.findAll(text=True))
-			name = getName(playerData)
-			(team, pos) = getTeamAndPosition(playerData)
-			fanTeam = fanTeams[count+1]
-			playerStats.extend([name, team, pos, fanTeam])
-			for i in range(0, len(stats)-4):
-				tmp = str(dataList[pNum+i].findAll(text=True))
-				tmp = tmp[3:len(tmp)-2]
-				if tmp.find("/") != -1:
-					playerStats.append("'" + tmp + "'")
-				else:
-					playerStats.append(tmp)
-			writer.writerow(playerStats)
-			count += 1
-		pageNum += 1
-		if pageNum >= maxPages: break
-	ofile.close()
-
-def selection_menu():
-	# Selection Menu
-	try:
-		leagueID = input("Enter Yahoo! League ID: ")
-	except:
-		print "Bad Selection. Exiting..."
-		sys.exit()
-
-	print "\nType of Data:"
-	print "-------------"
-	print "1. Pitchers\n2. Batters"
-	print "-------------"
-	try:
-		selection1 = input("Enter 1 or 2: ")
-	except:
-		print "Bad Selection. Exiting..."
-		sys.exit()
-	if (selection1 != 1 and selection1 != 2):
-		print "Bad Selection. Exiting..."
-		sys.exit()
-
-	print "\nTime frame:"
-	print "-------------"
-	print "1. 2015 Total\n2. 2014 Total\n3. Last 30 Days\n4. Last 14 Days\n5. Last 7 Days\n6. Today"
-	print "-------------"
-	try:
-		selection2 = input("Enter 1, 2, 3, 4, 5, or 6: ")
-	except:
-		print "Bad Selection. Exiting..."
-		sys.exit()
-	if (selection2 != 1 and selection2 != 2 and selection2 != 3 and selection2 != 4 and selection2 != 5 and selection2 != 6):
-		print "Bad Selection. Exiting..."
-		sys.exit()
-	print "\nChoose one:"
-	print "-------------"
-	print "1. All Players\n2. All Available Players"
-	print "-------------"
-	try:
-		selection3 = input("Enter 1 or 2: ")
-	except:
-		print "Bad Selection. Exiting..."
-		sys.exit()
-	if (selection3 != 1 and selection3 != 2):
-		print " Bad Selection. Exiting..."
-		sys.exit()
-	print "\nMax number of pages:"
-	print "-------------"
-	print "25 Players per page, sorted by O-Rank\nEnter 99 for all pages"
-	print "-------------"
-	try:
-		maxPages = input("Enter Max Pages: ")
-	except:
-		print "Bad Selection. Exiting..."
-		sys.exit()
-
-	username = raw_input("\nEnter Yahoo! username: ")
-	password = getpass.getpass(prompt="Enter Yahoo! password: ")
-
-	print 'Gathering Data...'
-	return (selection1, selection2, selection3, leagueID, maxPages, username, password)
-
-def buildURL(type, time, available, leagueID):
-
-	begin_url = 'http://baseball.fantasysports.yahoo.com/b1/' + str(leagueID) + '/players?status='
-	end_url = '&myteam=0&sort=OR&sdir=1&count='
+                fanTeam = fanTeams[0]
+                fanTeams.pop(0)
+                playerStats.extend([name, team, pos, fanTeam])
+                for i in range(0, len(stats)-4):
+                        tmp = str(dataList[0].findAll(text=True))
+                        playerStats.append(tmp[3:-2])
+                        dataList.pop(0)
+                writer.writerow(playerStats)
+        
+def buildURL(type, time, available):
+        global CONFIG_LEAGUEID
+        global CONFIG_SORT
+	begin_url = 'http://baseball.fantasysports.yahoo.com/b1/' + str(CONFIG_LEAGUEID) + '/players?status='
+	end_url = '&myteam=0&sort=' + str(CONFIG_SORT) + '&sdir=1&count='
 
 	if available == 1: status = 'ALL'
 	if available == 2: status = 'A'
 	if type == 1: pos = 'P'
 	if type == 2: pos = 'B'
-	if time == 1: timeFrame = 'S_2015'
-	if time == 2: timeFrame = 'S_2014'
-	if time == 3: timeFrame = 'L30'
-	if time == 4: timeFrame = 'L14'
-	if time == 5: timeFrame = 'L7'
-	if time == 6: timeFrame = 'L'
+	if time == '2016': timeFrame = 'S_2016'
+	if time == '2015': timeFrame = 'S_2015'
+	if time == '30': timeFrame = 'L30'
+	if time == '14': timeFrame = 'L14'
+	if time == '7': timeFrame = 'L7'
+	if time == 'today': timeFrame = 'L'
 
 	mid_url = status + '&pos=' + pos + '&cut_type=33&stat1=S_' + timeFrame
 	return begin_url + mid_url + end_url
