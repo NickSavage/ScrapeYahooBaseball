@@ -1,4 +1,4 @@
-# GetYahooFBBData
+# ScrapeYahooBaseball
 Scrape Yahoo Fantasy Baseball player page for statistics. This is a significant rewrite of isaacmiller2004's GetYahooFBBData to update it for the 2016 season, as well as adding the option to scrape pitchers and batters at the same time and save them into separate CSV files.
 
 ## Usage:
