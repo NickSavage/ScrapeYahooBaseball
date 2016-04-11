@@ -8,20 +8,28 @@ import datetime
 import sys
 import configobj
 import argparse
+import openpyxl
 
 CONFIG_LEAGUEID = 0
 CONFIG_FILENAME = ""
 CONFIG_SORT = ""
 CONFIG_CSV = True
 CONFIG_EXCEL = False
+CONFIG_BOTH = False
 writer = None
 ofile = None
+workbook = None
+worksheet = None
+currentRow = 1
+excelFilename = None
 
 def main():
         global CONFIG_LEAGUEID
         global CONFIG_FILENAME
         global CONFIG_SORT 
-        
+        global CONFIG_EXCEL
+        global CONFIG_CSV
+        global CONFIG_BOTH
         # command line parsing
         parser = argparse.ArgumentParser(description="Scrape baseball player data from Yahoo Fantasy Sports")
         parser.add_argument('-c','--config', default="config.ini")
@@ -31,6 +39,7 @@ def main():
         parser.add_argument('-p','--password')
         parser.add_argument('-u','--username')
         parser.add_argument('--available', action='store_true')
+        parser.add_argument('--excel', action='store_true')
         parser.add_argument('action', choices=['pitchers', 'batters', 'both'], help="scrape pitchers")
         
         args = parser.parse_args()
@@ -51,7 +60,11 @@ def main():
         elif (args.available == False):
                 CONFIG_AVAILABLE = 1
 
-        # load config from config file. At the moment, its only for leagueID, username and password
+        if (args.excel == True):
+                CONFIG_EXCEL = True
+                CONFIG_CSV = False
+
+      # load config from config file. At the moment, its only for leagueID, username and password
         # but in the future it will include overriding the defaults of the options
         (CONFIG_LEAGUEID, username, password) = loadConfig(CONFIG_FILENAME)
 
@@ -67,30 +80,63 @@ def main():
                 scrape(br, "2", CONFIG_TIMEFRAME, CONFIG_AVAILABLE, maxPages)
         elif CONFIG_PLAYERTYPE == "3": 
                 scrape(br, "1", CONFIG_TIMEFRAME, CONFIG_AVAILABLE, maxPages)
+                CONFIG_BOTH = True
                 scrape(br, "2", CONFIG_TIMEFRAME, CONFIG_AVAILABLE, maxPages)
 
 def buildWriter(CONFIG_PLAYERTYPE):
         global CONFIG_LEAGUEID
+        global CONFIG_CSV
+        global CONFIG_EXCEL
         global writer
         global ofile
-        
-        # build filename for export
-	if CONFIG_PLAYERTYPE == "1":
-		end_filename = 'Pitchers'
-	if CONFIG_PLAYERTYPE == "2":
-		end_filename = 'Batters'
+        global workbook
+        global worksheet
+        global excelFilename
+        global CONFIG_BOTH
+        global currentRow
+        if (CONFIG_CSV == True):
+                filename = buildFilename("csv", CONFIG_PLAYERTYPE)
+                ofile = open(filename, "wb")
+                writer = csv.writer(ofile, delimiter = ',', escapechar = ' ')
+        if (CONFIG_EXCEL == True):
+                if (CONFIG_BOTH == False):
+                        workbook = openpyxl.Workbook()
+                        worksheet = workbook.active
+                        excelFilename = buildFilename("excel", CONFIG_PLAYERTYPE)
+                if (CONFIG_BOTH == True):
+                        currentRow = 1
+                        worksheet = workbook.create_sheet()
+                print excelFilename
+                if CONFIG_PLAYERTYPE == "1":
+                        worksheet.title = 'Pitchers'
+                if CONFIG_PLAYERTYPE == "2":
+                        worksheet.title = 'Batters'
+def addWorksheet(CONFIG_PLAYERTYPE):
+        global workbook
+        global worksheet
+        if CONFIG_PLAYERTYPE == "1":
+                worksheet.title = 'Pitchers'
+        if CONFIG_PLAYERTYPE == "2":
+                worksheet.title = 'Batters'
 
-	filename = 'FBB_data_' + str(CONFIG_LEAGUEID) + '_' + end_filename + '_' + str(datetime.date.today()) + '.csv'
-        print filename
-	ofile = open(filename, "wb")
-	writer = csv.writer(ofile, delimiter = ',', escapechar = ' ')
+        
+def closeFile():
+        global ofile
+        global workbook
+        global excelFilename
+        global CONFIG_CSV
+        global CONFIG_EXCEL
+        
+        if (CONFIG_CSV == True):
+                ofile.close()
+        if (CONFIG_EXCEL == True):
+                workbook.save(excelFilename)
                 
 def scrape(br, localPlayerType, localTimeFrame, localAvailable, localMaxPages):
         #building url for scraping
-        global writer
-        global ofile
+
         buildWriter(localPlayerType)
-	url = buildURL(localPlayerType, localTimeFrame, localAvailable)
+        url = buildURL(localPlayerType, localTimeFrame, localAvailable)
 	content = br.open(url + '0')
 	soup = BeautifulSoup(content, "lxml")
         print url
@@ -106,7 +152,6 @@ def scrape(br, localPlayerType, localTimeFrame, localAvailable, localMaxPages):
                        stats.remove("Rankings")
 		except:
 			continue
-
 	writeData(stats) # write first row of csv file
 	pageNum = 0 # initialize counter for scraping lists of players
 
@@ -120,16 +165,23 @@ def scrape(br, localPlayerType, localTimeFrame, localAvailable, localMaxPages):
                 pageNum += 1
                 if pageNum >= localMaxPages: break
                 if end == 1: break
-        ofile.close() 
-                        
+        closeFile()
         # writeData exists only for the future where options will exist other than
         # just CSV files, mainly excel.
 def writeData(data):
         global writer
+        global worksheet
+        global currentRow
+        global CONFIG_CSV
+        global CONFIG_EXCEL
 
         if (CONFIG_CSV == True):
                 writer.writerow(data)
-        
+        if (CONFIG_EXCEL == True):
+                for i in range(1,len(data)):
+                        cell = worksheet.cell(row = currentRow, column = i)
+                        cell.value = data[i-1]
+                currentRow += 1
 def loadConfig(filename):
         try:
                 filename = open(filename, 'r')
@@ -235,6 +287,23 @@ def getNameTeamAndPosition(data):
 	pos = teampos[teampos.find("-")+2:len(teampos)]
 	return (name, team, pos)
 
+def buildFilename(dataType, CONFIG_PLAYERTYPE):
+        global CONFIG_LEAGUEID
+        global excelFilename
+        global CONFIG_CSV
+        global CONFIG_EXCEL
+        # build filename for export
+        filename = ""
+        if (CONFIG_CSV == True):
+                if CONFIG_PLAYERTYPE == "1":
+                        end_filename = 'Pitchers'
+                if CONFIG_PLAYERTYPE == "2":
+                        end_filename = 'Batters'
+                        
+                filename = 'FBB_data_' + str(CONFIG_LEAGUEID) + '_' + end_filename + '_' + str(datetime.date.today()) + '.csv'
+        elif (CONFIG_EXCEL == True):
+                filename = 'FBB_data_' + str(CONFIG_LEAGUEID) + '_' + str(datetime.date.today()) + '.xlsx'
+        return filename
 
 def fixText(str):
 	s = str
