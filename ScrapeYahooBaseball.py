@@ -33,11 +33,12 @@ def main():
         # command line parsing
         parser = argparse.ArgumentParser(description="Scrape baseball player data from Yahoo Fantasy Sports")
         parser.add_argument('-c','--config', default="config.ini")
-        parser.add_argument('-m','--max-pages', default=1)
+        parser.add_argument('-m','--max-pages', type=int, default=1)
         parser.add_argument('-t','--timeframe', choices=['2016', '2015', 'today', '7', '14', '30'], default='2016')
         parser.add_argument('-s','--sort', choices=['OR','AR'], default="AR")
         parser.add_argument('-p','--password')
         parser.add_argument('-u','--username')
+        parser.add_argument('-l','--leagueid', type=int)
         parser.add_argument('--available', action='store_true')
         parser.add_argument('--excel', action='store_true')
         parser.add_argument('action', choices=['pitchers', 'batters', 'both'], help="scrape pitchers")
@@ -52,7 +53,7 @@ def main():
         elif (action == "both"):
                 CONFIG_PLAYERTYPE = "3"
         CONFIG_FILENAME = args.config
-        maxPages = int(args.max_pages)
+        maxPages = args.max_pages
         CONFIG_TIMEFRAME = args.timeframe
         CONFIG_SORT = args.sort
         if (args.available):
@@ -63,14 +64,15 @@ def main():
         if (args.excel == True):
                 CONFIG_EXCEL = True
                 CONFIG_CSV = False
-
-      # load config from config file. At the moment, its only for leagueID, username and password
+     # load config from config file. At the moment, its only for leagueID, username and password
         # but in the future it will include overriding the defaults of the options
         (CONFIG_LEAGUEID, username, password) = loadConfig(CONFIG_FILENAME)
-
-        if (username == "") or (password == ""):
+        username = args.username
+        password = args.password
+        CONFIG_LEAGUEID = args.leagueid
+        if (username == None) or (password == None):
                 raise Exception("No username or password entered. Exiting...")
-        if (CONFIG_LEAGUEID == 0):
+        if (CONFIG_LEAGUEID == None):
                 raise Exception("No League ID entered. Exiting...")        
         # Start scraping process
 	br = authentication(username, password)
@@ -82,7 +84,24 @@ def main():
                 scrape(br, "1", CONFIG_TIMEFRAME, CONFIG_AVAILABLE, maxPages)
                 CONFIG_BOTH = True
                 scrape(br, "2", CONFIG_TIMEFRAME, CONFIG_AVAILABLE, maxPages)
+                
+def loadConfig(filename):
+        try:
+                filename = open(filename, 'r')
+        except:
+                print "No configuration file."
+                return(0, "", "")
+        config = configobj.ConfigObj(filename)
 
+        if (config['username']):
+                username = config['username']
+        if (config['password']):
+                password = config['password']
+        if (config['leagueID']):
+                leagueID = config['leagueID']
+
+        return(leagueID, username, password)
+ 
 def buildWriter(CONFIG_PLAYERTYPE):
         global CONFIG_LEAGUEID
         global CONFIG_CSV
@@ -99,13 +118,13 @@ def buildWriter(CONFIG_PLAYERTYPE):
                 ofile = open(filename, "wb")
                 writer = csv.writer(ofile, delimiter = ',', escapechar = ' ')
         if (CONFIG_EXCEL == True):
-                if (CONFIG_BOTH == False):
+                if (workbook != None):
+                        currentRow = 1
+                        worksheet = workbook.create_sheet()
+                if (workbook == None):
                         workbook = openpyxl.Workbook()
                         worksheet = workbook.active
                         excelFilename = buildFilename("excel", CONFIG_PLAYERTYPE)
-                if (CONFIG_BOTH == True):
-                        currentRow = 1
-                        worksheet = workbook.create_sheet()
                 print excelFilename
                 if CONFIG_PLAYERTYPE == "1":
                         worksheet.title = 'Pitchers'
@@ -182,23 +201,7 @@ def writeData(data):
                         cell = worksheet.cell(row = currentRow, column = i)
                         cell.value = data[i-1]
                 currentRow += 1
-def loadConfig(filename):
-        try:
-                filename = open(filename, 'r')
-        except:
-                print "No configuration file."
-                sys.exit(1)
-        config = configobj.ConfigObj(filename)
-
-        if (config['username']):
-                username = config['username']
-        if (config['password']):
-                password = config['password']
-        if (config['leagueID']):
-                leagueID = config['leagueID']
-
-        return(leagueID, username, password)
-        
+       
 def authentication(username, password):
 	cj = cookielib.CookieJar()
 	br = mechanize.Browser()
